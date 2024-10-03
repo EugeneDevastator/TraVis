@@ -8,12 +8,17 @@ class Program
     static void Main(string[] args)
     {
         Console.WriteLine("Universal Tree Navigator");
+        MainLoop();
+    }
+
+    static async void MainLoop()
+    {
         var navigator = new TreeNavigator();
         var view = new TreeView();
 
         while (true)
         {
-            view.Display(navigator.CurrentModel);
+            view.Display(await navigator.GetCurrentModel());
             Console.WriteLine("\nEnter command (cd <name>, cd .., exit):");
             var input = Console.ReadLine();
 
@@ -27,6 +32,7 @@ class Program
             }
         }
     }
+
 }
 
 public class TreeView
@@ -59,11 +65,11 @@ public class TreeModel
 
 public interface ITreeEngine
 {
-    TreeModel GetCurrentModel();
-    TreeModel GoRelative(string path);
+    Task<TreeModel> GetCurrentModel();
+    Task<TreeModel> GoRelative(string path);
     string TreeType { get; }
 
-    void SetRoot(string path);
+    Task SetRoot(string path);
 }
 
 public class TreeNavigator
@@ -81,11 +87,11 @@ public class TreeNavigator
         currentEngine = treeEngines["Disk"];
     }
 
-    public TreeModel CurrentModel => currentEngine.GetCurrentModel();
+    public async Task<TreeModel> GetCurrentModel() => await currentEngine.GetCurrentModel();
 
-    public void Navigate(string path)
+    public async Task Navigate(string path)
     {
-        var result = currentEngine.GoRelative(path);
+        var result = await currentEngine.GoRelative(path);
 
         switch (result.NavResult)
         {
@@ -127,7 +133,7 @@ public class DiskTreeEngine : ITreeEngine
 {
     public string TreeType => "Disk";
 
-    public TreeModel GetCurrentModel()
+    public async Task<TreeModel> GetCurrentModel()
     {
         return new TreeModel
         {
@@ -138,7 +144,7 @@ public class DiskTreeEngine : ITreeEngine
         };
     }
 
-    public TreeModel GoRelative(string path)
+    public async Task<TreeModel> GoRelative(string path)
     {
         if (path == "..")
         {
@@ -162,11 +168,11 @@ public class DiskTreeEngine : ITreeEngine
         }
         else
         {
-            return GetCurrentModel();
+            return await GetCurrentModel();
         }
     }
 
-    public void SetRoot(string path)
+    public async Task SetRoot(string path)
     {
     }
 }
@@ -177,7 +183,7 @@ public class FileSystemTreeEngine : ITreeEngine
 
     public string TreeType => "FileSystem";
 
-    public TreeModel GetCurrentModel()
+    public async Task<TreeModel> GetCurrentModel()
     {
         return new TreeModel
         {
@@ -188,7 +194,7 @@ public class FileSystemTreeEngine : ITreeEngine
         };
     }
 
-    public TreeModel GoRelative(string path)
+    public async Task<TreeModel> GoRelative(string path)
     {
         if (path == ".." && Path.GetPathRoot(currentPath) == currentPath)
         {
@@ -217,14 +223,14 @@ public class FileSystemTreeEngine : ITreeEngine
         if (Directory.Exists(newPath))
         {
             currentPath = newPath;
-            return GetCurrentModel();
+            return await GetCurrentModel();
         }
 
         // If path doesn't exist, stay at the current location
-        return GetCurrentModel();
+        return await GetCurrentModel();
     }
 
-    public void SetRoot(string path)
+    public async Task SetRoot(string path)
     {
         currentPath = path;
     }
