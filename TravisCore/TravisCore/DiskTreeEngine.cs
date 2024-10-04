@@ -2,22 +2,11 @@
 {
     public string TreeType => "Disk";
 
-    public async Task<TreeModel> GetCurrentModel()
-    {
-        return new TreeModel
-        {
-            NodeName = "Disks",
-            Children = DriveInfo.GetDrives().Select(d => d.Name.TrimEnd('\\')).ToArray(),
-            NavResult = TreeNavResult.Inside,
-            TreeType = TreeType
-        };
-    }
-
-    public async Task<TreeModel> GoRelative(string path)
+    public async Task<TreeNavNormal> GoRelative(string path)
     {
         if (path == "..")
         {
-            return new TreeModel
+            return new TreeNavNormal
             {
                 NodeName = "Disks",
                 Children = DriveInfo.GetDrives().Select(d => d.Name.TrimEnd('\\')).ToArray(),
@@ -27,7 +16,7 @@
         }
         else if (DriveInfo.GetDrives().Any(d => d.Name.TrimEnd('\\') == path))
         {
-            return new TreeModel
+            return new TreeNavNormal
             {
                 NodeName = path,
                 Children = new string[0],
@@ -37,7 +26,13 @@
         }
         else
         {
-            return await GetCurrentModel();
+            return new TreeNavNormal
+            {
+                NodeName = "Disks",
+                Children = DriveInfo.GetDrives().Select(d => d.Name.TrimEnd('\\')).ToArray(),
+                NavResult = TreeNavResult.Inside,
+                TreeType = TreeType
+            };
         }
     }
 

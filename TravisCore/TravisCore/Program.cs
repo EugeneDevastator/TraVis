@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
@@ -38,7 +37,7 @@ class Program
 
 public class TreeView
 {
-    public void Display(TreeModel model)
+    public void Display(TreeNavNormal model)
     {
         Console.WriteLine($"Current: {model.NodeName}");
         Console.WriteLine("Contents:");
@@ -56,7 +55,17 @@ public enum TreeNavResult
     EndChild
 }
 
-public class TreeModel
+public interface ITreeNavResult { };
+
+public struct TreeNavOutside : ITreeNavResult
+{
+    public bool IsRoot => String.IsNullOrEmpty(ForwardArgument);
+    public string ForwardArgument { get; init; }
+
+    public string RequestedTreeEngine { get; init; }
+}
+
+public struct TreeNavNormal : ITreeNavResult
 {
     public string NodeName { get; init; }
     public string[] Children { get; init; }
@@ -66,8 +75,8 @@ public class TreeModel
 
 public interface ITreeEngine
 {
-    Task<TreeModel> GetCurrentModel();
-    Task<TreeModel> GoRelative(string path);
+
+    Task<TreeNavNormal> GoRelative(string path = "");
     string TreeType { get; }
 
     Task SetRoot(string path);
@@ -81,19 +90,21 @@ public class TreeNavigator
     public TreeNavigator()
     {
         var diskTree = new DiskTreeEngine();
-        var rootTree = new ConcatTrees(diskTree, new WindowsTreeEngine());
+        var windows = new WindowsTreeEngine();
+        var rootTree = new ConcatTrees(diskTree, windows);
         treeEngines = new Dictionary<string, ITreeEngine>
         {
             { "root", rootTree },
             { "FileSystem", new FileSystemTreeEngine() },
             { "Disk", diskTree },
+            { "Windows", windows },
          //   { "FileSystem", new FileSystemTreeEngine() }
           //  { "Windows", new WindowsTreeEngine() }
         };
         currentEngine = treeEngines["root"];
     }
 
-    public async Task<TreeModel> GetCurrentModel() => await currentEngine.GetCurrentModel();
+    public async Task<TreeNavNormal> GetCurrentModel() => await currentEngine.GoRelative();
 
     public async Task Navigate(string path)
     {
@@ -105,16 +116,25 @@ public class TreeNavigator
                 var parentTreeType = GetParentTreeType(currentEngine.TreeType);
                 if (parentTreeType != null)
                 {
+                    var returnpath = result.NodeName;
                     currentEngine = treeEngines[parentTreeType];
+                    currentEngine.SetRoot(path + "\\");
                 }
                 break;
 
             case TreeNavResult.EndChild:
+                // internal resolve
                 var childTreeType = GetChildTreeType(currentEngine.TreeType, path);
                 if (childTreeType != null)
                 {
                     currentEngine = treeEngines[childTreeType];
-                    currentEngine.SetRoot(path+"\\");
+                    currentEngine.SetRoot(path + "\\");
+                }
+                // on demand resolve
+                else if (treeEngines.TryGetValue(result.TreeType, out var t))
+                {
+                    currentEngine = t;
+                    currentEngine.SetRoot(result.NodeName);
                 }
                 break;
 
@@ -135,110 +155,6 @@ public class TreeNavigator
     }
 }
 
-public class FileSystemTreeEngine : ITreeEngine
-{
-    private string currentPath = "C:\\";
-
-    public string TreeType => "FileSystem";
-
-    public async Task<TreeModel> GetCurrentModel()
-    {
-        return new TreeModel
-        {
-            NodeName = currentPath,
-            Children = Directory.GetFileSystemEntries(currentPath).Select(Path.GetFileName).ToArray(),
-            NavResult = TreeNavResult.Inside,
-            TreeType = TreeType
-        };
-    }
-
-    public async Task<TreeModel> GoRelative(string path)
-    {
-        if (path == ".." && Path.GetPathRoot(currentPath) == currentPath)
-        {
-            return new TreeModel
-            {
-                NodeName = currentPath,
-                Children = Directory.GetFileSystemEntries(currentPath).Select(Path.GetFileName).ToArray(),
-                NavResult = TreeNavResult.RootParent,
-                TreeType = TreeType
-            };
-        }
-
-        string newPath = Path.GetFullPath(Path.Combine(currentPath, path));
-
-        if (File.Exists(newPath))
-        {
-            return new TreeModel
-            {
-                NodeName = newPath,
-                Children = new string[0],
-                NavResult = TreeNavResult.EndChild,
-                TreeType = TreeType
-            };
-        }
-
-        if (Directory.Exists(newPath))
-        {
-            currentPath = newPath;
-            return await GetCurrentModel();
-        }
-
-        // If path doesn't exist, stay at the current location
-        return await GetCurrentModel();
-    }
-
-    public async Task SetRoot(string path)
-    {
-        currentPath = path;
-    }
-}
-
-
-public class WindowsTreeEngine : ITreeEngine
-{
-    public string TreeType => "Windows";
-
-    public async Task<TreeModel> GetCurrentModel()
-    {
-        var processes = Process.GetProcesses()
-            .Where(p => !string.IsNullOrEmpty(p.MainWindowTitle))
-            .Select(p => p.MainWindowTitle)
-            .ToArray();
-
-        return new TreeModel
-        {
-            NodeName = "Open Windows",
-            Children = processes,
-            NavResult = TreeNavResult.Inside,
-            TreeType = TreeType
-        };
-    }
-
-    public async Task<TreeModel> GoRelative(string path)
-    {
-        if (path == "..")
-        {
-            return new TreeModel
-            {
-                NodeName = "Open Windows",
-                Children = new string[0],
-                NavResult = TreeNavResult.RootParent,
-                TreeType = TreeType
-            };
-        }
-        else
-        {
-            return await GetCurrentModel();
-        }
-    }
-
-    public async Task SetRoot(string path)
-    {
-        // Not applicable for Windows tree
-    }
-}
-
 public class ConcatTrees : ITreeEngine
 {
     private List<ITreeEngine> trees;
@@ -252,7 +168,7 @@ public class ConcatTrees : ITreeEngine
         currentTreeIndex = -1;
     }
 
-    public async Task<TreeModel> GetCurrentModel()
+    private async Task<TreeNavNormal> GetCurrentModel()
     {
         if (currentTreeIndex == -1)
         {
@@ -260,11 +176,10 @@ public class ConcatTrees : ITreeEngine
             var rootChildren = new List<string>();
             for (int i = 0; i < trees.Count; i++)
             {
-                var treeModel = await trees[i].GetCurrentModel();
-                rootChildren.Add($"{i}:{treeModel.NodeName}");
+                rootChildren.Add($"{i}:{trees[i].TreeType}");
             }
 
-            return new TreeModel
+            return new TreeNavNormal
             {
                 NodeName = "ConcatTrees Root",
                 Children = rootChildren.ToArray(),
@@ -275,18 +190,23 @@ public class ConcatTrees : ITreeEngine
         else
         {
             // We're inside a specific tree
-            return await trees[currentTreeIndex].GetCurrentModel();
+            return new TreeNavNormal
+            {
+                NodeName = "ConcatTrees Root",
+                NavResult = TreeNavResult.EndChild,
+                TreeType = trees[currentTreeIndex].TreeType
+            };
         }
     }
 
-    public async Task<TreeModel> GoRelative(string path)
+    public async Task<TreeNavNormal> GoRelative(string path)
     {
         if (currentTreeIndex == -1)
         {
             // We're at the root level
             if (path == "..")
             {
-                return new TreeModel
+                return new TreeNavNormal
                 {
                     NodeName = "ConcatTrees Root",
                     Children = new string[0],
@@ -297,26 +217,19 @@ public class ConcatTrees : ITreeEngine
             else if (int.TryParse(path.Split(':')[0], out int index) && index >= 0 && index < trees.Count)
             {
                 currentTreeIndex = index;
-                return new TreeModel
-                {
-                    NodeName = (await trees[currentTreeIndex].GetCurrentModel()).TreeType,
-                    Children = new string[0],
-                    NavResult = TreeNavResult.EndChild,
-                    TreeType = TreeType
-                };
-                
+                return await GetCurrentModel();
             }
         }
         else
         {
             // We're inside a specific tree
-            var result = await trees[currentTreeIndex].GoRelative(path);
-            if (result.NavResult == TreeNavResult.RootParent)
-            {
-                currentTreeIndex = -1;
-                return await GetCurrentModel();
-            }
-            return result;
+            //var result = await trees[currentTreeIndex].GoRelative(path);
+            //if (result.NavResult == TreeNavResult.RootParent)
+            //{
+            //    currentTreeIndex = -1;
+            //    return await GetCurrentModel();
+            //}
+            return await GetCurrentModel();
         }
 
         // If the path is invalid, stay at the current location
@@ -325,6 +238,7 @@ public class ConcatTrees : ITreeEngine
 
     public async Task SetRoot(string path)
     {
+        currentTreeIndex = -1;
         // Not applicable for ConcatTrees
     }
 }
